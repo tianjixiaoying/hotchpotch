@@ -12,9 +12,11 @@ public class HbaseServiceTest {
 		System.out.println(HbaseService.getRowCount("callinfo"));
 		long end=System.nanoTime();
 		System.out.println(HbaseService.getRowCount("callinfo", "inf"));
-		System.out.println(HbaseService.getRowCount(Bytes.toBytes("callinfo")));
 		long end2=System.nanoTime();
+		System.out.println(HbaseService.getRowCount(Bytes.toBytes("callinfo")));
+		long end3=System.nanoTime();
 		System.out.println(end-start);
 		System.out.println(end2-end);
+		System.out.println(end3-end2);
 	}
 }

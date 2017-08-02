@@ -9,23 +9,28 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MasterNotRunningException;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.TableNotFoundException;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
-import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.Admin;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.client.coprocessor.AggregationClient;
 import org.apache.hadoop.hbase.client.coprocessor.LongColumnInterpreter;
 import org.apache.hadoop.hbase.filter.FirstKeyOnlyFilter;
 import org.apache.hadoop.hbase.util.Bytes;
 
 public class HbaseService {
-	private static Configuration conf;
-	private static HBaseAdmin admin=null;
-	private static String coprocessorClassName = "org.apache.hadoop.hbase.coprocessor.AggregateImplementation";
 	private static Log logger=LogFactory.getLog(HbaseService.class);
+	
+	private static Configuration conf;
+	private static Connection conn;
+	private static Admin admin=null;
+	private static String coprocessorClassName = "org.apache.hadoop.hbase.coprocessor.AggregateImplementation";
 	
 	/**
 	 * 初始化配置
@@ -43,11 +48,22 @@ public class HbaseService {
 		return conf;
 	}
 	
-	private static HBaseAdmin getAdmin(){
+	public static Connection getConn(){
+		try {
+			if(conn==null){
+				conn=ConnectionFactory.createConnection(conf);
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return conn;
+	}
+	
+	private static Admin getAdmin(){
 		try {
 			if(admin==null){
-				admin=new HBaseAdmin(conf);
-			}
+				admin=getConn().getAdmin();
+			} 
 		} catch (MasterNotRunningException e) {
 			logger.error(e);
 		} catch (ZooKeeperConnectionException e) {
@@ -75,7 +91,7 @@ public class HbaseService {
 	 */
 	public static void disableTable(String tableName){
 		try {
-			getAdmin().disableTable(tableName);
+			getAdmin().disableTable(TableName.valueOf(tableName));
 		} catch (IOException e) {
 			logger.error(e);
 		}
@@ -87,7 +103,7 @@ public class HbaseService {
 	 */
 	public static void enableTable(String tableName){
 		try {
-			getAdmin().enableTable(tableName);
+			getAdmin().enableTable(TableName.valueOf(tableName));
 		} catch (IOException e) {
 			logger.error(e);
 		}
@@ -101,8 +117,7 @@ public class HbaseService {
 	public static long getRowCount(String tableName) {  
 	    long rowCount = 0;  
 	    try {  
-	        HTable table = new HTable(conf, tableName);
-	        
+	        Table table= getConn().getTable(TableName.valueOf(tableName));
 	        Scan scan = new Scan();  
 	        scan.setFilter(new FirstKeyOnlyFilter());
 	        ResultScanner resultScanner = table.getScanner(scan);  
@@ -125,6 +140,12 @@ public class HbaseService {
 		return getRowCount(Bytes.toString(tableName),"");
 	}
 	
+	/**
+	 * 指定列族来统计行数
+	 * @param tableName 表名
+	 * @param family 列族名
+	 * @return 行数
+	 */
 	public static long getRowCount(String tableName,String family){
 		Scan scan = new Scan();
 		if(StringUtils.isNotBlank(family)){
@@ -144,7 +165,7 @@ public class HbaseService {
 	}
 	/**
 	 * <pre>
-	 * 使用Coprocessor新特性来对表行数进行统计 ,性能比直接用scan提高5倍
+	 * 使用Coprocessor新特性来对表行数进行统计 ,性能比直接用scan指定列族提高5倍，不指定列族提高50倍
 	 * 在Table注册了Coprocessor之后，在执行AggregationClient的时候，
 	 * 会将RowCount分散到Table的每一个Region上，Region内RowCount的计算，是通过RPC执行调用接口，
 	 * 由Region对应的RegionServer执行InternalScanner进行的。 
@@ -159,7 +180,7 @@ public class HbaseService {
 	public static long getRowCount(String tableName, Scan scan) {
 		HTableDescriptor htd = null;
 		try {
-			htd = getAdmin().getTableDescriptor(Bytes.toBytes(tableName));
+			htd = getAdmin().getTableDescriptor(TableName.valueOf(tableName));
 		} catch (TableNotFoundException e1) {
 			logger.error(e1);
 		} catch (IOException e1) {
@@ -172,7 +193,7 @@ public class HbaseService {
 
 		long rowCount = 0;
 		try {
-			HTable t = new HTable(conf, tableName);
+			Table t=getConn().getTable(TableName.valueOf(tableName));
 			rowCount = ac.rowCount(t, new LongColumnInterpreter(), scan);
 			//下面这三行，删除表的Copreocessor属性，必要时才需要；一般不需要。因为验证影响性能
 //			if (htd != null && htd.hasCoprocessor(coprocessorClassName)) {
@@ -196,21 +217,22 @@ public class HbaseService {
 	
 	private static void addTableCoprocessor(String tableName, String coprocessorClassName,HTableDescriptor htd) {  
 	    try {  
-	        getAdmin().disableTable(tableName);  
+	        getAdmin().disableTable(TableName.valueOf(tableName));  
 	        htd.addCoprocessor(coprocessorClassName);  
-	        getAdmin().modifyTable(Bytes.toBytes(tableName), htd);  
-	        getAdmin().enableTable(tableName);  
+	        getAdmin().modifyTable(TableName.valueOf(tableName), htd);  
+	        getAdmin().enableTable(TableName.valueOf(tableName));  
 	    } catch (IOException e) {  
 	        logger.info(e.getMessage(), e);  
 	    }  
 	}  
+	
 	@SuppressWarnings("unused")
 	private static void removeTableCoprocessor(String tableName, String coprocessorClassName,HTableDescriptor htd) {  
 	    try {  
-	        getAdmin().disableTable(tableName);  
+	        getAdmin().disableTable(TableName.valueOf(tableName));  
 	        htd.removeCoprocessor(coprocessorClassName);
-	        getAdmin().modifyTable(Bytes.toBytes(tableName), htd);  
-	        getAdmin().enableTable(tableName);  
+	        getAdmin().modifyTable(TableName.valueOf(tableName), htd);  
+	        getAdmin().enableTable(TableName.valueOf(tableName));  
 	    } catch (IOException e) {  
 	        logger.info(e.getMessage(), e);  
 	    }  
